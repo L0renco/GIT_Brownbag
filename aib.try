@@ -1,0 +1,808 @@
+from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Response
+from fastapi.encoders import jsonable_encoder
+# from fastapi_utils.api_settings import get_api_settings
+from typing import Optional
+from sqlalchemy.exc import IntegrityError
+from schemas.jmeter import jmeter
+from config.db import conn, conn1
+import csv
+#from aiohttp.web import HTTPConflict
+# from typing import List
+# from starlette.requests import Request
+# from starlette.responses import Response
+from uuid import uuid4
+# from fastapi_cache import FastAPICache
+# from fastapi_cache.decorator import cache
+# import mysql.connector
+from fastapi.responses import JSONResponse
+from fastapi.responses import StreamingResponse
+import pandas
+import operator
+import json
+import numpy
+import io
+import os
+import pymysql
+from models.jmeter import jmeter
+from fastapi.middleware.cors import CORSMiddleware
+app = FastAPI()
+
+origins = ["*"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# Dummy
+
+@app.get("/api/jmeter/login", tags=["Login"])
+def jmeter_test_log_Upload(response: Response,userName:str,passWord:str):
+    
+    # err_msg = [{'success': 'false', 'Error': 'Duplicate Entry'}]
+    # date_format = '%%Y-%%m-%%d %%H:%%i:%%s.%%f'
+    data = conn.execute("select EXISTS(select * from userLogin where username='"+userName+"' and pass_word='"+passWord+"') as Authorization").fetchall()
+    pass_msg = [{'success': 'true', 'data': data}]
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    if data:
+        return JSONResponse(content=jsonable_encoder(pass_msg))
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+# Dummy
+
+@app.post("/api/activity/insertActivity", tags=["Activity"])
+def insert_Activity(response: Response, activity: str, userID:str):
+    pass_msg = [{'success': 'true'}]
+    err_msg = [{'success': 'false'}]
+    try:
+        data = conn.execute("insert into activity_history (user_id,activity) values (%s,%s)",
+                            (userID, activity))
+    except IntegrityError as e:
+        return JSONResponse(content=jsonable_encoder(err_msg))
+
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+
+    if data:
+        return JSONResponse(content=jsonable_encoder(pass_msg))
+
+    # else:
+    #     return JSONResponse(content=jsonable_encoder(data))
+
+
+
+
+
+
+
+@app.get("/api/jmeter/getprofile2", tags=["Dummy"])
+def jmeter_test_log_Upload(response: Response):
+    
+    err_msg = [{'success': 'false', 'Error': 'Duplicate Entry'}]
+    date_format = '%%Y-%%m-%%d %%H:%%i:%%s.%%f'
+    data = conn.execute("select SQL_NO_CACHE distinct workspace_name,profile_name from sla_profile").fetchall()
+    pass_msg = [{'success': 'true', 'data': data}]
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    if data:
+        return JSONResponse(content=jsonable_encoder(pass_msg))
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+
+
+
+
+# Upload SLA
+
+@app.post("/api/jmeter/uploadSLA", tags=["Jmeter Log"])
+def jmeter_test_log_Upload(response: Response,userName:str,workspaceName: str,profileName: str, file: UploadFile = File(...)):
+    # data=""
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    try:
+        with open(file.filename, 'wb') as f:
+            while contents := file.file.read(1024 * 1024):
+                f.write(contents)
+    except Exception:
+        return {"message": "There was an error uploading the file"}
+    line_count = 0
+    with open(file.filename, 'r') as f:
+        line_read = f.readlines()
+        reader = csv.reader(line_read, quotechar='"', delimiter=',',
+                            quoting=csv.QUOTE_ALL, skipinitialspace=True)
+        next(reader, None)
+        for i in reader:
+            data = conn.execute("insert into sla_profile (user_id,workspace_name,profile_name,label,sla_value) values (%s,%s,%s,%s,%s)", (userName, workspaceName, profileName, i[0], i[1]))
+            line_count = line_count+1
+    if data:
+        return {
+            "success": True,
+            "Lines inserted": line_count
+        }
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+
+
+
+# get
+
+@app.get("/api/sla/getProfileData", tags=["SLA"])
+def get_project(response: Response,workspaceName:str,profileName:str):
+    data = conn.execute("select label,sla_value from sla_profile where workspace_name='" +
+                        workspaceName+"' and profile_name='"+profileName+"'").fetchall()
+    # headers={"Access-Control-Allow-Origin":"*"}
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    # return JSONResponse(content=data, headers=headers)
+    if data:
+        return {
+            "success": True,
+            "data": data
+        }
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+@app.get("/api/sla/checkProfileName", tags=["SLA"])
+def checkProfileName(response: Response,profileName:str):
+    data = conn.execute("select * from sla_profile where profile_name='"+profileName+"'").fetchall()
+    # headers={"Access-Control-Allow-Origin":"*"}
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    # return JSONResponse(content=data, headers=headers)
+    if data:
+        return {
+            "success": True,
+            "data": data
+        }
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+
+
+
+# get
+
+@app.get("/api/sla/getProfilebyWorkspaceName", tags=["SLA"])
+def get_project(response: Response,wrkspaceName: str):
+    data = conn.execute("select SQL_NO_CACHE distinct(profile_name) from sla_profile where workspace_name='"+wrkspaceName+"'").fetchall()
+    # conn.autocommit(True)
+    # headers={"Access-Control-Allow-Origin":"*"}
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    # return JSONResponse(content=data, headers=headers)
+    if data:
+        return {
+            "success": True,
+            "data": data
+        }
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+
+# delete
+
+@app.delete("/api/sla/deleteProfile", tags=["SLA"])
+def delete_workspace(response: Response, workspaceName: str, profileName: str):
+    data = conn.execute("delete from sla_profile where workspace_name='" +
+                        workspaceName+"' and profile_name='"+profileName+"'")
+    # headers={"Access-Control-Allow-Origin":"*"}
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    # return JSONResponse(content=data, headers=headers)
+    pass_msg = [{'success': 'true'}]
+    if data:
+        return JSONResponse(content=jsonable_encoder(pass_msg))
+
+    else:
+        return {
+            "success": False
+        }
+
+
+# Dummy
+
+@app.get("/api/jmeter/getChartData", tags=["Dummy"])
+
+def dummy(response: Response, testName: str,profile_name:str,projectName:str,wrkspaceName:str,filter_by:str):
+
+    cursor = conn1.cursor()
+
+    cursor.execute("call jmeter_jtl.chart_data('"+wrkspaceName+"','"+projectName+"','"+testName+"','"+profile_name+"','"+filter_by+"')")
+
+    response.headers["Cache-Control"] = "no-cache"
+
+    response.headers["Access-Control-Allow-Origin"] = "*"
+
+    columns = cursor.description
+
+    results = [[{columns[index][0]:column for index,
+
+                 column in enumerate(value)} for value in cursor.fetchall()]]
+
+    while cursor.nextset():
+
+        columns = cursor.description
+
+        results.append([{columns[index][0]:column for index, column in enumerate(
+
+            value)} for value in cursor.fetchall()])
+
+    return JSONResponse(content=jsonable_encoder(results))
+    
+@app.get("/api/jmeter/getCompareData_abs", tags=["Dummy"])
+
+def getDashboardData(response: Response, testName: str,testName_base:str):
+
+    cursor = conn1.cursor()
+
+    cursor.execute("call jmeter_jtl.compare_test_abs('"+testName_base+"','"+testName+"')")
+
+    response.headers["Cache-Control"] = "no-cache"
+
+    response.headers["Access-Control-Allow-Origin"] = "*"
+
+    columns = cursor.description
+
+    results = [[{columns[index][0]:column for index,
+
+                 column in enumerate(value)} for value in cursor.fetchall()]]
+
+    while cursor.nextset():
+
+        columns = cursor.description
+
+        results.append([{columns[index][0]:column for index, column in enumerate(
+
+            value)} for value in cursor.fetchall()])
+
+    return JSONResponse(content=jsonable_encoder(results))
+
+
+@app.get('/api/jmeter', tags=["Jmeter Log"])
+async def Read_all():
+    data = conn.execute(jmeter.select()).fetchall()
+    return {
+        "success": True,
+        "data": data
+    }
+
+# Dummy
+
+
+@app.get("/api/jmeter/getDashboardData", tags=["Dummy"])
+def getDashboardData(response: Response, userID: str):
+    cursor = conn1.cursor()
+    cursor.execute("call jmeter_jtl.dashboard_data('"+userID+"')")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    columns = cursor.description
+    results = [[{columns[index][0]:column for index,
+                 column in enumerate(value)} for value in cursor.fetchall()]]
+    while cursor.nextset():
+        columns = cursor.description
+        results.append([{columns[index][0]:column for index, column in enumerate(
+            value)} for value in cursor.fetchall()])
+    return JSONResponse(content=jsonable_encoder(results))
+
+@app.get("/api/jmeter/getCompareData", tags=["Dummy"])
+def getDashboardData(response: Response, testName: str,testName_base:str):
+    cursor = conn1.cursor()
+    cursor.execute("call jmeter_jtl.compare_test('"+testName+"','"+testName_base+"')")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    columns = cursor.description
+    results = [[{columns[index][0]:column for index,
+                 column in enumerate(value)} for value in cursor.fetchall()]]
+    while cursor.nextset():
+        columns = cursor.description
+        results.append([{columns[index][0]:column for index, column in enumerate(
+            value)} for value in cursor.fetchall()])
+    return JSONResponse(content=jsonable_encoder(results))
+
+# Dummy
+# def getProfileByWorkspace(response: Response,wrkspaceName: str, testName: str,unique_id = str(uuid4())):
+@app.get("/api/jmeter/SLA/getProfileByUser", tags=["SLA"])
+def getProfileByWorkspace(response: Response,userName: str):
+    # const ms = Date.now();
+    cursor = conn1.cursor()
+    cursor.execute("call jmeter_jtl.sla_data('"+userName+"')")
+    response.headers["Cache-Control"] = "no-store, no-cache"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "-1"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    headers = {"Cache-Control": "no-store, no-cache", "Pragma": "no-cache", "Expires": "-1"}
+    columns = cursor.description
+    results = [[{columns[index][0]:column for index,
+                 column in enumerate(value)} for value in cursor.fetchall()]]
+    while cursor.nextset():
+        columns = cursor.description
+        results.append([{columns[index][0]:column for index, column in enumerate(
+            value)} for value in cursor.fetchall()])
+    return JSONResponse(content=jsonable_encoder(results),headers=headers)
+
+
+# Average by Test Name
+
+@app.get("/api/jmeter/getAverage", tags=["Jmeter Log"])
+def average_response_time(testName: str):
+    data = conn.execute("SELECT label, ROUND(avg(elapsed),2) as Average FROM jmeter Where test_name='" +
+                        testName+"' GROUP BY label").fetchall()
+
+    if data:
+        return {
+            "success": True,
+            "data": data
+        }
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+# Average by Test Name All
+
+
+@app.get("/api/jmeter/getAverageAll", tags=["Jmeter Log"])
+def average_response_time_all(response: Response, testName: str):
+    data = conn.execute(
+        "SELECT ROUND(avg(elapsed),2) as Average FROM jmeter Where test_name='"+testName+"'").fetchall()
+    pass_msg = [{'success': 'true', 'data': data}]
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    if data:
+        return JSONResponse(content=jsonable_encoder(pass_msg))
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+# Get User Count
+
+
+@app.get("/api/jmeter/getUserCount", tags=["Jmeter Log"])
+def User_count(response: Response, testName: str):
+
+    err_msg = [{'success': 'false', 'Error': 'Duplicate Entry'}]
+    data = conn.execute(
+        "select max(allThreads) as UserCount from jmeter where test_name='Test1'").fetchall()
+    pass_msg = [{'success': 'true', 'data': data}]
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    if data:
+        return JSONResponse(content=jsonable_encoder(pass_msg))
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+# Get Throughput
+
+
+@app.get("/api/jmeter/getThroughput", tags=["Jmeter Log"])
+def throughput(response: Response, testName: str):
+
+    err_msg = [{'success': 'false', 'Error': 'Duplicate Entry'}]
+    date_format = '%%Y-%%m-%%d %%H:%%i:%%s.%%f'
+    data = conn.execute("select TRUNCATE(count(timestamp)/(TIMESTAMPDIFF(MINUTE,min(substring(date_format(FROM_UNIXTIME(FLOOR(`timeStamp`)/1000), '"+date_format +
+                        "'),1,23)),max(substring(date_format(FROM_UNIXTIME(FLOOR(`timeStamp`)/1000), '"+date_format+"'),1,23)))*60),2) as Throughput from jmeter").fetchall()
+    pass_msg = [{'success': 'true', 'data': data}]
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    if data:
+        return JSONResponse(content=jsonable_encoder(pass_msg))
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+# 90 th / 95 th / 99 th Percentile Calculation
+
+
+@app.get("/api/jmeter/getPercentile", tags=["Jmeter Log"])
+def percentile_response_time(testName: str,
+                             percentile: int):
+    data = conn.execute("SELECT label, CAST(SUBSTRING_INDEX(SUBSTRING_INDEX( GROUP_CONCAT(elapsed ORDER BY elapsed SEPARATOR ','),',', FLOOR("+str(percentile) +
+                        "/100 * COUNT(*))), ',', -1) AS DECIMAL) AS 'Percentile' FROM jmeter where test_name='"+testName+"' group by label order by Percentile desc limit 5 ;").fetchall()
+    if percentile > 100:
+        return {
+            "success": False,
+            "Message": "Please provide Percentile less than or equal to 100"
+        }
+    if data:
+        return {
+            "success": True,
+            "Percentile": str(percentile),
+            "data": data
+        }
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+# Error % by Test Name
+
+
+@app.get("/api/jmeter/getErrorPercent", tags=["Jmeter Log"])
+def error_percentage(testName: str):
+    data = conn.execute("SELECT label,ROUND(100-SUM(success='true') / COUNT(*) * 100,2) ErrorPercent FROM jmeter Where test_name='" +
+                        testName+"' GROUP BY label").fetchall()
+
+    if data:
+        return {
+            "success": True,
+            "data": data
+        }
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+# Overall Error % by Test Name
+
+
+@app.get("/api/jmeter/getErrorPercentAll", tags=["Jmeter Log"])
+def error_percentage_all(response: Response, testName: str):
+    data = conn.execute(
+        "SELECT ROUND(100-SUM(success) / COUNT(*) * 100,2) as ErrorPercent FROM jmeter Where test_name='"+testName+"'").fetchall()
+    pass_msg = [{'success': 'true', 'data': data}]
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    if data:
+        return JSONResponse(content=jsonable_encoder(pass_msg))
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+# Overall Pass % by Test Name
+
+ 
+@app.get("/api/jmeter/getPassPercentAll", tags=["Jmeter Log"])
+def pass_percentage_all(response: Response, testName: str):
+    data = conn.execute(
+        "SELECT ROUND(SUM(success) / COUNT(*) * 100,2) as PassPercent FROM jmeter Where test_name='"+testName+"'").fetchall()
+    pass_msg = [{'success': 'true', 'data': data}]
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    if data:
+        return JSONResponse(content=jsonable_encoder(pass_msg))
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+# Top Slow Percentile Response time
+
+
+@app.get("/api/jmeter/getSlowTransaction", tags=["Jmeter Log"])
+def top_slow_percentile_response_time(testName: str,
+                                      percentile: int,
+                                      limit: Optional[int] = 50):
+    data = conn.execute("SELECT label, CAST(SUBSTRING_INDEX(SUBSTRING_INDEX( GROUP_CONCAT(elapsed ORDER BY elapsed SEPARATOR ','),',', FLOOR("+str(percentile) +
+                        "/100 * COUNT(*))), ',', -1) AS DECIMAL) AS 'Percentile' FROM jmeter where test_name='"+testName+"' group by label order by Percentile desc limit 0,"+str(limit)+" ;").fetchall()
+    if percentile > 100:
+        return {
+            "success": False,
+            "Message": "Please provide Percentile less than or equal to 100"
+        }
+    if data:
+        return {
+            "success": True,
+            "Percentile": str(percentile),
+            "Top": str(limit),
+            "data": data
+        }
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+# Top Error
+
+
+@app.get("/api/jmeter/getPeakError", tags=["Jmeter Log"])
+def peak_error_percentage(testName: str, limit: Optional[int] = 50):
+    data = conn.execute("SELECT label,ROUND(100-SUM(success) / COUNT(*) * 100,2) ErrorPercent FROM jmeter Where test_name='" +
+                        testName+"' GROUP BY label  order by ErrorPercent desc limit 0,"+str(limit)+" ;").fetchall()
+
+    if data:
+        return {
+            "success": True,
+            "Top": str(limit),
+            "data": data
+        }
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+# Thread Count
+
+
+@app.get("/api/jmeter/getThreadCount", tags=["Jmeter Log"])
+def Thread_count(testName: str):
+    data = conn.execute("select MAX(CAST((SUBSTRING_INDEX(threadName,'-',-1)) as UNSIGNED)) as ThreadCount,label,test_Name from jmeter where test_name='" +
+                        testName+"' group by label").fetchall()
+
+    if data:
+        return {
+            "success": True,
+            "data": data
+        }
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+
+@app.post("/api/jmeter/uploadJTL", tags=["Jmeter Log"])
+def jmeter_test_log_Upload(response: Response, testName: str,projectName: str,workspaceName: str, file: UploadFile = File(...)):
+    # data=""
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    try:
+        with open(file.filename, 'wb') as f:
+            while contents := file.file.read(1024 * 1024):
+                f.write(contents)
+    except Exception:
+        return {"message": "There was an error uploading the file"}
+    line_count = 0
+    with open(file.filename, 'r') as f:
+        line_read = f.readlines()
+        reader = csv.reader(line_read, quotechar='"', delimiter=',',
+                            quoting=csv.QUOTE_ALL, skipinitialspace=True)
+        next(reader, None)
+        for i in reader:
+            data = conn.execute("insert into jmeter (workspace_name,project_name,test_name,timeStamp,elapsed,label,responseCode,responseMessage,threadName,success,bytes,grpThreads,allThreads,Latency,Hostname,Connect) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (
+                workspaceName,projectName,testName, i[0], i[1], i[2], i[3], i[4], i[5], i[6], i[7], i[8], i[9], i[10], i[11], i[12]))
+            line_count = line_count+1
+    if data:
+        return {
+            "success": True,
+            "Lines inserted": line_count
+        }
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+
+# WORKSPACES
+
+@app.post("/api/workspace/createWorkspace", tags=["Workspaces"])
+def create_workspace(response: Response, workspaceName: str, description: str,userID:str):
+    pass_msg = [{'success': 'true'}]
+    err_msg = [{'success': 'false', 'Error': 'Duplicate Entry'}]
+    try:
+        data = conn.execute("insert into workspace (user_id,workspace_name,workspace_desc) values (%s,%s,%s)",
+                            (userID, workspaceName, description))
+    except IntegrityError as e:
+        return JSONResponse(content=jsonable_encoder(err_msg))
+
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+
+    if data:
+        return JSONResponse(content=jsonable_encoder(pass_msg))
+
+    # else:
+    #     return JSONResponse(content=jsonable_encoder(data))
+
+
+@app.get("/api/workspace/getWorkspace", tags=["Workspaces"])
+def get_workspace(response: Response, user_id: str):
+    data = conn.execute(
+        "select * from workspace where user_id='"+user_id+"'").fetchall()
+    # headers={"Access-Control-Allow-Origin":"*"}
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    # return JSONResponse(content=data, headers=headers)
+    if data:
+        return {
+            "success": True,
+            "data": data
+        }
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+
+@app.delete("/api/workspace/deleteWorkspace", tags=["Workspaces"])
+def delete_workspace(response: Response, workspaceName: str):
+    data = conn.execute(
+        "DELETE FROM workspace, project USING workspace LEFT JOIN project ON workspace.workspace_name = project.workspace_name  WHERE workspace.workspace_name= '"+workspaceName+"'")
+    # headers={"Access-Control-Allow-Origin":"*"}
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    # return JSONResponse(content=data, headers=headers)
+    pass_msg = [{'success': 'true'}]
+    if data:
+        return JSONResponse(content=jsonable_encoder(pass_msg))
+
+    else:
+        return {
+            "success": False
+        }
+
+# PROJECTS
+
+
+@app.post("/api/project/createProject", tags=["Projects"])
+def create_project(response: Response, userID:str,projectName: str, description: str, workspaceName: str):
+    pass_msg = [{'success': 'true'}]
+    err_msg = [{'success': 'false', 'Error': 'Duplicate Entry'}]
+    try:
+        data = conn.execute("insert into project (user_id,proj_name,proj_desc,workspace_name) values (%s,%s,%s,%s)",
+                            (userID,projectName, description, workspaceName))
+    except IntegrityError as e:
+        return JSONResponse(content=jsonable_encoder(err_msg))
+
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+
+    if data:
+        return JSONResponse(content=jsonable_encoder(pass_msg))
+
+    # else:
+    #     return JSONResponse(content=jsonable_encoder(data))
+
+
+@app.get("/api/project/getProject", tags=["Projects"])
+def get_project(response: Response):
+    data = conn.execute("select * from project").fetchall()
+    # headers={"Access-Control-Allow-Origin":"*"}
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    # return JSONResponse(content=data, headers=headers)
+    if data:
+        return {
+            "success": True,
+            "data": data
+        }
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+
+@app.get("/api/project/getTestNameByProject", tags=["Projects"])
+def get_project(response: Response,projectName: str):
+    data = conn.execute("select distinct(test_name) from jmeter where project_name='" +
+                        projectName+"'").fetchall()
+    # headers={"Access-Control-Allow-Origin":"*"}
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    # return JSONResponse(content=data, headers=headers)
+    if data:
+        return {
+            "success": True,
+            "data": data
+        }
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+    
+@app.get("/api/project/getProjectByWorkspace", tags=["Projects"])
+def get_project(response: Response,workspaceName: str):
+    data = conn.execute("select * from project where workspace_name='" +
+                        workspaceName+"'").fetchall()
+    # headers={"Access-Control-Allow-Origin":"*"}
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    # return JSONResponse(content=data, headers=headers)
+    if data:
+        return {
+            "success": True,
+            "data": data
+        }
+    else:
+        return {
+            "success": False,
+            "data": data
+        }
+
+
+@app.delete("/api/project/deleteProject", tags=["Project"])
+def delete_workspace(response: Response, projectName: str, workspaceName: str):
+    data = conn.execute("delete from project where workspace_name='" +
+                        workspaceName+"' and proj_name='"+projectName+"'")
+    # headers={"Access-Control-Allow-Origin":"*"}
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    # return JSONResponse(content=data, headers=headers)
+    pass_msg = [{'success': 'true'}]
+    if data:
+        return JSONResponse(content=jsonable_encoder(pass_msg))
+
+    else:
+        return {
+            "success": False
+        }
+
+# Charts - get all table data
+
+
+@app.get("/api/jmeter/chart/getAggregate", tags=["Chart"])
+def get_chart_aggregate(response: Response, testName: str):
+    # query="select substring(date_format(FROM_UNIXTIME(FLOOR(`timeStamp`)/1000), '%%Y-%%m-%%d %%H:%%i:%%s.%%f'),1,23) AS 'year',label as name,elapsed as n from jmeter where test_name='Test1'"
+    data = conn.execute("SELECT label, count(success) as 'Samples',ROUND(avg(elapsed),2) as Avg,min(`elapsed`+0) as Min,max(`elapsed`+0) as Max,CAST(SUBSTRING_INDEX(SUBSTRING_INDEX( GROUP_CONCAT(elapsed ORDER BY elapsed SEPARATOR ','),',', FLOOR(90/100 * COUNT(*))), ',', -1) AS DECIMAL) AS '90%% Line',CAST(SUBSTRING_INDEX(SUBSTRING_INDEX( GROUP_CONCAT(elapsed ORDER BY elapsed SEPARATOR ','),',', FLOOR(95/100 * COUNT(*))), ',', -1) AS DECIMAL) AS '95%% Line',CAST(SUBSTRING_INDEX(SUBSTRING_INDEX( GROUP_CONCAT(elapsed ORDER BY elapsed SEPARATOR ','),',', FLOOR(99/100 * COUNT(*))), ',', -1) AS DECIMAL) AS '99%% Line',ROUND(100-SUM(success='true') / COUNT(*) * 100,2) as 'Error %%' FROM jmeter where test_name='Test1' GROUP BY label").fetchall()
+    # df = pandas.DataFrame(dict(col1 = data[1], col2 = [2],col3=[3]))
+    # result_dataFrame = pandas.read_sql(query,conn)
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    stream = io.StringIO()
+    pass_msg = [{'success': 'true', 'data': data}]
+    if data:
+        return JSONResponse(content=jsonable_encoder(pass_msg))
+
+# Chart Response Code distribution
+
+
+@app.get("/api/jmeter/chart/getResponseCode", tags=["Chart"])
+def get_chart_aggregate(response: Response, testName: str):
+    # query="select substring(date_format(FROM_UNIXTIME(FLOOR(`timeStamp`)/1000), '%%Y-%%m-%%d %%H:%%i:%%s.%%f'),1,23) AS 'year',label as name,elapsed as n from jmeter where test_name='Test1'"
+    data = conn.execute("select responseCode as 'Response Code',responseMessage as 'Response Message',count(responseMessage) as 'Occurance' from jmeter group by responseCode,responseMessage order by responseMessage").fetchall()
+    # df = pandas.DataFrame(dict(col1 = data[1], col2 = [2],col3=[3]))
+    # result_dataFrame = pandas.read_sql(query,conn)
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    stream = io.StringIO()
+    pass_msg = [{'success': 'true', 'data': data}]
+    if data:
+        return JSONResponse(content=jsonable_encoder(pass_msg))
+
+
+# Chart Response Code over time
+@app.get("/api/jmeter/chart/getResponseCodeOvertime", tags=["Chart"])
+def get_chart_aggregate(response: Response, testName: str):
+    # query="select substring(date_format(FROM_UNIXTIME(FLOOR(`timeStamp`)/1000), '%%Y-%%m-%%d %%H:%%i:%%s.%%f'),1,23) AS 'year',label as name,elapsed as n from jmeter where test_name='Test1'"
+    data = conn.execute("select substring(date_format(FROM_UNIXTIME(FLOOR(`timeStamp`)/1000), '%%Y-%%m-%%d %%H:%%i:%%s.%%f'),1,23) AS 'year',responseCode as 'Response Code',responseMessage as 'Response Message'from jmeter").fetchall()
+    # df = pandas.DataFrame(dict(col1 = data[1], col2 = [2],col3=[3]))
+    # result_dataFrame = pandas.read_sql(query,conn)
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    stream = io.StringIO()
+    pass_msg = [{'success': 'true', 'data': data}]
+    if data:
+        return JSONResponse(content=jsonable_encoder(pass_msg))
